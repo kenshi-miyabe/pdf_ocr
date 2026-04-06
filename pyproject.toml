@@ -1,0 +1,13 @@
+[project]
+name = "pdf-ocr"
+version = "0.1.0"
+description = "OCR PDF files through LM Studio and write sibling .txt files."
+requires-python = ">=3.10"
+dependencies = [
+    "PyMuPDF>=1.24.0",
+    "PyYAML>=6.0.1",
+    "requests>=2.31.0",
+]
+
+[tool.uv]
+package = false
