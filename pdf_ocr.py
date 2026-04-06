@@ -28,7 +28,6 @@ import yaml
 
 
 DEFAULT_BASE_URL = "http://127.0.0.1:1234/v1"
-DEFAULT_MODEL = "qwen3.5-9b"
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("ocr_config.yml")
 DEFAULT_OUTPUT_EXTENSION = ".md"
 DEFAULT_PROMPT = (
@@ -175,13 +174,11 @@ def chat_completion(
     session: requests.Session,
     *,
     base_url: str,
-    model: str,
     api_key: str,
     messages: list[dict],
     timeout: int,
 ) -> str:
     payload = {
-        "model": model,
         "messages": messages,
         "temperature": 0,
     }
@@ -204,7 +201,6 @@ def ocr_page(
     session: requests.Session,
     *,
     base_url: str,
-    model: str,
     prompt: str,
     api_key: str,
     page_image_url: str,
@@ -213,7 +209,6 @@ def ocr_page(
     return chat_completion(
         session,
         base_url=base_url,
-        model=model,
         api_key=api_key,
         timeout=timeout,
         messages=[
@@ -232,7 +227,6 @@ def review_ocr_result(
     session: requests.Session,
     *,
     base_url: str,
-    model: str,
     review_prompt: str,
     api_key: str,
     answer_text: str,
@@ -253,7 +247,6 @@ def review_ocr_result(
     return chat_completion(
         session,
         base_url=base_url,
-        model=model,
         api_key=api_key,
         timeout=timeout,
         messages=[{"role": "user", "content": review_input}],
@@ -271,7 +264,6 @@ def ocr_pdf(
     *,
     session: requests.Session,
     base_url: str,
-    model: str,
     prompt: str,
     api_key: str,
     dpi: int,
@@ -290,7 +282,6 @@ def ocr_pdf(
             page_text = ocr_page(
                 session,
                 base_url=base_url,
-                model=model,
                 prompt=prompt,
                 api_key=api_key,
                 page_image_url=image_url,
@@ -311,7 +302,6 @@ def main() -> int:
         print(f"[ERROR] Failed to read config {config_path}: {exc}", file=sys.stderr)
         return 1
 
-    model = str(config.get("model") or DEFAULT_MODEL)
     prompt = str(config.get("prompt") or DEFAULT_PROMPT)
     review_prompt = str(config.get("review_prompt") or DEFAULT_REVIEW_PROMPT)
     try:
@@ -353,7 +343,6 @@ def main() -> int:
                 pdf_path,
                 session=session,
                 base_url=args.base_url,
-                model=model,
                 prompt=prompt,
                 api_key=args.api_key,
                 dpi=args.dpi,
@@ -384,7 +373,6 @@ def main() -> int:
                 review = review_ocr_result(
                     session,
                     base_url=args.base_url,
-                    model=model,
                     review_prompt=review_prompt,
                     api_key=args.api_key,
                     answer_text=answer_text,
