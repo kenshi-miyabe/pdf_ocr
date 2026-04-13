@@ -73,6 +73,7 @@ uv run python pdf_ocr.py /path/to/file.pdf
 
 PDF ファイルを指定した場合はその 1 ファイルだけを処理し、ディレクトリを指定した場合はその中の PDF をすべて処理します。
 実行すると、各 PDF と同じ場所に同名の `.md` が作成されます。
+同名の `.md` がすでに存在する PDF は、`--overwrite` を付けない限りスキップされます。
 各ファイルごとに、OCR 完了時と review 完了時にそれぞれ処理時間が標準エラー出力へ表示されます。
 
 例:
@@ -89,7 +90,7 @@ uv run python pdf_ocr.py -ans ./answerfile.txt ./pdfs/sample.pdf
 
 ## オプション
 
-- `--overwrite`: 既存の出力ファイルを上書きします
+- `--overwrite`: 既存の出力ファイルや同名の `.md` がある場合でも上書きします
 - `--dpi`: PDF を画像化するときの解像度です
 - `--base-url`: LM Studio API の URL を指定します
 - `--config`: `prompt` などを定義した YAML ファイルを指定します

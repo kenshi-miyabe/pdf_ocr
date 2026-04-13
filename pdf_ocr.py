@@ -333,8 +333,13 @@ def main() -> int:
 
     for pdf_path in pdf_files:
         output_path = pdf_path.with_suffix(output_extension)
-        if output_path.exists() and not args.overwrite:
-            print(f"[SKIP] {output_path.name} already exists", file=sys.stderr)
+        markdown_output_path = pdf_path.with_suffix(".md")
+        if (
+            not args.overwrite
+            and (output_path.exists() or markdown_output_path.exists())
+        ):
+            existing_path = output_path if output_path.exists() else markdown_output_path
+            print(f"[SKIP] {existing_path.name} already exists", file=sys.stderr)
             continue
 
         ocr_started_at = time.perf_counter()
