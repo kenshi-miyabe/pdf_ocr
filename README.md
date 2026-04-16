@@ -96,7 +96,7 @@ uv run python pdf_ocr.py -ans ./answerfile.txt ./pdfs/sample.pdf
 - `--config`: `prompt` などを定義した YAML ファイルを指定します
 - `--api-key`: OpenAI 互換 API 用の API キーを指定します
 - `-ans`, `--answer-file`: OCR 後の講評に使う問題文または参照テキストファイルを指定します
-- `--timeout`: ページごとの API リクエストのタイムアウト秒数です
+- `--timeout`: ページごとの API リクエストのタイムアウト秒数です。既定値は 600 秒です
 
 ## 講評機能
 

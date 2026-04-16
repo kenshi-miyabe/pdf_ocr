@@ -124,8 +124,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--timeout",
         type=int,
-        default=300,
-        help="HTTP timeout in seconds for each request. Defaults to 300.",
+        default=600,
+        help="HTTP timeout in seconds for each request. Defaults to 600.",
     )
     return parser.parse_args()
 
