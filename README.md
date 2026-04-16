@@ -112,6 +112,8 @@ pdf_ocr -ans answerfile.txt pdffile.pdf
 - その後、問題文と OCR 結果をもとにしたレビュー結果が同じ Markdown ファイルの末尾に追記されます
 - 講評時の指示文は YAML の `review_prompt` で変更できます
 - モデルへ渡す際は `review_prompt`、問題文、OCR 答案が開始・終了マーカー付きで明確に区切られます
+- OCR 中に timeout した場合は、その PDF の出力ファイルは作成されません
+- review 中に timeout した場合は、OCR 結果は保存したうえで、timeout した旨を Markdown に追記します
 
 ## YAML 設定
 

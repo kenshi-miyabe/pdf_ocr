@@ -259,6 +259,14 @@ def append_review_to_output(output_text: str, review_text: str) -> str:
     return f"{base}\n\n---\n\n## Review\n\n{review}\n"
 
 
+def append_review_timeout_to_output(output_text: str, timeout: int) -> str:
+    base = output_text.rstrip()
+    return (
+        f"{base}\n\n---\n\n## Review\n\n"
+        f"[TIMEOUT] Review request timed out after {timeout} seconds.\n"
+    )
+
+
 def ocr_pdf(
     pdf_path: Path,
     *,
@@ -353,6 +361,12 @@ def main() -> int:
                 dpi=args.dpi,
                 timeout=args.timeout,
             )
+        except requests.Timeout as exc:
+            print(
+                f"[ERROR] Timeout while processing {pdf_path.name}: {exc}",
+                file=sys.stderr,
+            )
+            return 1
         except requests.HTTPError as exc:
             print(
                 f"[ERROR] HTTP error while processing {pdf_path.name}: {format_http_error(exc)}",
@@ -384,6 +398,14 @@ def main() -> int:
                     ocr_text=text,
                     timeout=args.timeout,
                 )
+            except requests.Timeout:
+                text = append_review_timeout_to_output(text, args.timeout)
+                output_path.write_text(text, encoding="utf-8")
+                print(
+                    f"[REVIEW TIMEOUT] {pdf_path.name} (timeout after {args.timeout}s)",
+                    file=sys.stderr,
+                )
+                continue
             except requests.HTTPError as exc:
                 print(
                     f"[ERROR] HTTP error while reviewing {pdf_path.name}: {format_http_error(exc)}",
