@@ -88,6 +88,32 @@ uv run python pdf_ocr.py . --config ./ocr_config.yml
 uv run python pdf_ocr.py -ans ./answerfile.txt ./pdfs/sample.pdf
 ```
 
+## `zip-pairs` 関数
+
+OCR 後に、同名の `.md` と `.pdf` のペアをまとめて zip 化したい場合は、[zip-pairs.sh](/Users/miyabe/github/pdf_ocr/zip-pairs.sh) の関数を `~/.zshrc` から読み込むと便利です。
+
+`~/.zshrc` に次の 1 行を追加します。
+
+```bash
+source /Users/miyabe/github/pdf_ocr/zip-pairs.sh
+```
+
+設定を反映します。
+
+```bash
+source ~/.zshrc
+```
+
+その後、`.md` と `.pdf` があるディレクトリで次を実行します。
+
+```bash
+zip-pairs
+```
+
+たとえば `sample.md` と `sample.pdf` が両方ある場合、`sample.zip` を作成します。`.md` だけ、または `.pdf` だけのファイルはスキップされます。
+
+`zip` コマンドが成功したペアだけが `Created: ...` と表示され、最後に処理件数が表示されます。
+
 ## オプション
 
 - `--overwrite`: 既存の出力ファイルや同名の `.md` がある場合でも上書きします
