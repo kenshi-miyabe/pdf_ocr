@@ -177,11 +177,14 @@ def chat_completion(
     api_key: str,
     messages: list[dict],
     timeout: int,
+    extra_body: dict | None = None,
 ) -> str:
     payload = {
         "messages": messages,
         "temperature": 0,
     }
+    if extra_body:
+        payload.update(extra_body)
 
     response = session.post(
         f"{base_url.rstrip('/')}/chat/completions",
@@ -220,6 +223,7 @@ def ocr_page(
                 ],
             },
         ],
+        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
     )
 
 
@@ -250,6 +254,7 @@ def review_ocr_result(
         api_key=api_key,
         timeout=timeout,
         messages=[{"role": "user", "content": review_input}],
+        extra_body={"chat_template_kwargs": {"enable_thinking": True}},
     )
 
 
