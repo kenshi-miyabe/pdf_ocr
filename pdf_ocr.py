@@ -267,6 +267,17 @@ def append_review_timeout_to_output(output_text: str, timeout: int) -> str:
     )
 
 
+def format_page_output(page_number: int, page_text: str) -> str:
+    return f"## page {page_number} {len(page_text)}文字\n\n{page_text.strip()}\n"
+
+
+def format_page_timeout_output(page_number: int, timeout: int) -> str:
+    return (
+        f"## page {page_number} TIMEOUT\n\n"
+        f"[TIMEOUT] OCR request timed out after {timeout} seconds.\n"
+    )
+
+
 def ocr_pdf(
     pdf_path: Path,
     *,
@@ -287,15 +298,35 @@ def ocr_pdf(
                 flush=True,
             )
             image_url = render_page_to_png_data_url(page, dpi)
-            page_text = ocr_page(
-                session,
-                base_url=base_url,
-                prompt=prompt,
-                api_key=api_key,
-                page_image_url=image_url,
-                timeout=timeout,
+            # OCR requests are sent one page at a time; the next page waits for
+            # the current page response so a single LM Studio server is not hit
+            # with concurrent page requests from this process.
+            try:
+                page_text = ocr_page(
+                    session,
+                    base_url=base_url,
+                    prompt=prompt,
+                    api_key=api_key,
+                    page_image_url=image_url,
+                    timeout=timeout,
+                )
+            except requests.Timeout:
+                pages_text.append(format_page_timeout_output(index, timeout))
+                print(
+                    f"[OCR PAGE TIMEOUT] {pdf_path.name}: page {index}/{total_pages} "
+                    f"(timeout after {timeout}s)",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                continue
+
+            pages_text.append(format_page_output(index, page_text))
+            print(
+                f"[OCR PAGE DONE] {pdf_path.name}: page {index}/{total_pages} "
+                f"({len(page_text)} chars)",
+                file=sys.stderr,
+                flush=True,
             )
-            pages_text.append(page_text)
     return "\n\n".join(pages_text).strip() + "\n"
 
 

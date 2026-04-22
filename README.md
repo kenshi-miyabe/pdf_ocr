@@ -74,6 +74,7 @@ uv run python pdf_ocr.py /path/to/file.pdf
 PDF ファイルを指定した場合はその 1 ファイルだけを処理し、ディレクトリを指定した場合はその中の PDF をすべて処理します。
 実行すると、各 PDF と同じ場所に同名の `.md` が作成されます。
 同名の `.md` がすでに存在する PDF は、`--overwrite` を付けない限りスキップされます。
+1 つの PDF のページ OCR は同時並行ではなく、1 ページずつ順番に API へ送られます。次のページは前のページの応答が返ってから開始されます。
 各ファイルごとに、OCR 完了時と review 完了時にそれぞれ処理時間が標準エラー出力へ表示されます。
 
 例:
@@ -135,10 +136,11 @@ pdf_ocr -ans answerfile.txt pdffile.pdf
 このとき:
 
 - OCR 結果は通常どおり `.md` などの出力ファイルとして保存されます
+- 各ページは `## page N 文字数` の見出し付きで保存されます
 - その後、問題文と OCR 結果をもとにしたレビュー結果が同じ Markdown ファイルの末尾に追記されます
 - 講評時の指示文は YAML の `review_prompt` で変更できます
 - モデルへ渡す際は `review_prompt`、問題文、OCR 答案が開始・終了マーカー付きで明確に区切られます
-- OCR 中に timeout した場合は、その PDF の出力ファイルは作成されません
+- OCR 中に timeout したページは、timeout した旨を Markdown に書いたうえで次のページ処理へ進みます
 - review 中に timeout した場合は、OCR 結果は保存したうえで、timeout した旨を Markdown に追記します
 
 ## YAML 設定
