@@ -60,7 +60,7 @@ pdf_ocr -ans /path/to/answerfile.txt /path/to/file.pdf
 ## 実行方法
 
 1. LM Studio を起動する
-2. 使用したいモデルをロードする
+2. 使用したいモデルをロードする(Context Length 8192以上を推奨)
 3. OpenAI 互換 API サーバーを有効化する
 4. [ocr_config.yml](/Users/miyabe/github/pdf_ocr/ocr_config.yml) で `prompt` などを必要に応じて編集する
 5. 以下のコマンドを実行する
