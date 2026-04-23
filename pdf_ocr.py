@@ -292,8 +292,9 @@ def ocr_pdf(
     api_key: str,
     dpi: int,
     timeout: int,
-) -> str:
+) -> tuple[str, bool]:
     pages_text: list[str] = []
+    skip_output = False
     with fitz.open(pdf_path) as document:
         total_pages = len(document)
         for index, page in enumerate(document, start=1):
@@ -332,7 +333,16 @@ def ocr_pdf(
                 file=sys.stderr,
                 flush=True,
             )
-    return "\n\n".join(pages_text).strip() + "\n"
+            if index in {1, 2} and len(page_text) == 0:
+                print(
+                    f"[SKIP] {pdf_path.name}: page {index} OCR output is 0 chars; "
+                    "skip markdown and review",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                skip_output = True
+                break
+    return "\n\n".join(pages_text).strip() + "\n", skip_output
 
 
 def main() -> int:
@@ -388,7 +398,7 @@ def main() -> int:
 
         ocr_started_at = time.perf_counter()
         try:
-            text = ocr_pdf(
+            text, skip_output = ocr_pdf(
                 pdf_path,
                 session=session,
                 base_url=args.base_url,
@@ -421,6 +431,8 @@ def main() -> int:
 
         ocr_elapsed = time.perf_counter() - ocr_started_at
         print(f"[OCR DONE] {pdf_path.name} ({ocr_elapsed:.2f}s)", file=sys.stderr)
+        if skip_output:
+            continue
 
         if answer_text is not None:
             review_started_at = time.perf_counter()
