@@ -30,6 +30,7 @@ import yaml
 DEFAULT_BASE_URL = "http://127.0.0.1:1234/v1"
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("ocr_config.yml")
 DEFAULT_OUTPUT_EXTENSION = ".md"
+MAX_OCR_OUTPUT_CHARS = 5000
 DEFAULT_PROMPT = (
     "PDF のページ画像に対して OCR を行ってください。"
     "読める文字を自然な順序で忠実に抽出し、結果は Markdown で出力してください。"
@@ -283,6 +284,10 @@ def format_page_timeout_output(page_number: int, timeout: int) -> str:
     )
 
 
+def truncate_page_ocr_text(page_text: str) -> str:
+    return page_text[:MAX_OCR_OUTPUT_CHARS]
+
+
 def ocr_pdf(
     pdf_path: Path,
     *,
@@ -326,6 +331,8 @@ def ocr_pdf(
                 )
                 continue
 
+            original_page_chars = len(page_text)
+            page_text = truncate_page_ocr_text(page_text)
             pages_text.append(format_page_output(index, page_text))
             print(
                 f"[OCR PAGE DONE] {pdf_path.name}: page {index}/{total_pages} "
@@ -333,6 +340,13 @@ def ocr_pdf(
                 file=sys.stderr,
                 flush=True,
             )
+            if original_page_chars > len(page_text):
+                print(
+                    f"[OCR TRUNCATED] {pdf_path.name}: page {index} limited OCR "
+                    f"output to {MAX_OCR_OUTPUT_CHARS} chars",
+                    file=sys.stderr,
+                    flush=True,
+                )
             if index in {1, 2} and len(page_text) == 0:
                 print(
                     f"[SKIP] {pdf_path.name}: page {index} OCR output is 0 chars; "
