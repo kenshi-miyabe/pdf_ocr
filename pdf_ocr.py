@@ -19,8 +19,9 @@ import json
 import os
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 import fitz
 import requests
@@ -31,6 +32,12 @@ DEFAULT_BASE_URL = "http://127.0.0.1:1234/v1"
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("ocr_config.yml")
 DEFAULT_OUTPUT_EXTENSION = ".md"
 MAX_OCR_OUTPUT_CHARS = 5000
+THINKING_FIELD_NAMES = {
+    "reasoning_content",
+    "reasoning",
+    "thinking",
+    "reasoning_text",
+}
 DEFAULT_PROMPT = (
     "PDF のページ画像に対して OCR を行ってください。"
     "読める文字を自然な順序で忠実に抽出し、結果は Markdown で出力してください。"
@@ -171,6 +178,95 @@ def format_http_error(exc: requests.HTTPError) -> str:
     return f"{response.status_code} {response.reason}: {body}"
 
 
+@dataclass
+class ChatCompletionResult:
+    content: str
+    thinking: str
+
+
+class ChatCompletionTimeout(requests.Timeout):
+    def __init__(self, message: str, *, thinking: str = "") -> None:
+        super().__init__(message)
+        self.thinking = thinking
+
+
+def thinking_output_path(pdf_path: Path) -> Path:
+    return pdf_path.with_name(f"thinking-{pdf_path.stem}.txt")
+
+
+def append_thinking_output(
+    pdf_path: Path,
+    *,
+    stage: str,
+    reason: str,
+    thinking: str,
+) -> None:
+    if not thinking.strip():
+        return
+
+    path = thinking_output_path(pdf_path)
+    entry = (
+        f"\n\n===== {stage}: {reason} =====\n"
+        f"{thinking.strip()}\n"
+    )
+    with path.open("a", encoding="utf-8") as file:
+        file.write(entry)
+    print(f"[THINKING WRITE] {path.name}", file=sys.stderr, flush=True)
+
+
+def extract_text_parts(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        text = value.get("text") or value.get("content")
+        return [text] if isinstance(text, str) else []
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return parts
+    return []
+
+
+def extract_thinking_parts(value: Any) -> list[str]:
+    parts: list[str] = []
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            if key in THINKING_FIELD_NAMES:
+                parts.extend(extract_text_parts(nested))
+                if isinstance(nested, (dict, list)):
+                    parts.extend(extract_thinking_parts(nested))
+            elif isinstance(nested, (dict, list)):
+                parts.extend(extract_thinking_parts(nested))
+    elif isinstance(value, list):
+        for item in value:
+            parts.extend(extract_thinking_parts(item))
+    return parts
+
+
+def parse_stream_data_line(line: str | bytes) -> dict | None:
+    if isinstance(line, bytes):
+        line = line.decode("utf-8", errors="replace")
+    if not line.startswith("data:"):
+        return None
+
+    data = line.removeprefix("data:").strip()
+    if not data or data == "[DONE]":
+        return None
+
+    try:
+        parsed = json.loads(data)
+    except json.JSONDecodeError:
+        return None
+
+    return parsed if isinstance(parsed, dict) else None
+
+
 def chat_completion(
     session: requests.Session,
     *,
@@ -179,26 +275,50 @@ def chat_completion(
     messages: list[dict],
     timeout: int,
     extra_body: dict | None = None,
-) -> str:
+) -> ChatCompletionResult:
     payload = {
         "messages": messages,
         "temperature": 0,
     }
     if extra_body:
         payload.update(extra_body)
+    payload["stream"] = True
 
-    response = session.post(
-        f"{base_url.rstrip('/')}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        data=json.dumps(payload),
-        timeout=timeout,
+    content_parts: list[str] = []
+    thinking_parts: list[str] = []
+    try:
+        with session.post(
+            f"{base_url.rstrip('/')}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json; charset=utf-8",
+            },
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            timeout=timeout,
+            stream=True,
+        ) as response:
+            response.raise_for_status()
+            for raw_line in response.iter_lines(decode_unicode=False):
+                if raw_line is None:
+                    continue
+                parsed = parse_stream_data_line(raw_line)
+                if parsed is None:
+                    continue
+
+                for choice in parsed.get("choices", []):
+                    delta = choice.get("delta") or {}
+                    message = choice.get("message") or {}
+                    content_parts.extend(extract_text_parts(delta.get("content")))
+                    content_parts.extend(extract_text_parts(message.get("content")))
+                    thinking_parts.extend(extract_thinking_parts(delta))
+                    thinking_parts.extend(extract_thinking_parts(message))
+    except requests.Timeout as exc:
+        raise ChatCompletionTimeout(str(exc), thinking="".join(thinking_parts)) from exc
+
+    return ChatCompletionResult(
+        content="".join(content_parts).strip(),
+        thinking="".join(thinking_parts),
     )
-    response.raise_for_status()
-    data = response.json()
-    return data["choices"][0]["message"]["content"].strip()
 
 
 def ocr_page(
@@ -209,7 +329,7 @@ def ocr_page(
     api_key: str,
     page_image_url: str,
     timeout: int,
-) -> str:
+) -> ChatCompletionResult:
     return chat_completion(
         session,
         base_url=base_url,
@@ -237,7 +357,7 @@ def review_ocr_result(
     answer_text: str,
     ocr_text: str,
     timeout: int,
-) -> str:
+) -> ChatCompletionResult:
     review_input = (
         "===== REVIEW PROMPT START =====\n"
         f"{review_prompt}\n"
@@ -313,7 +433,7 @@ def ocr_pdf(
             # the current page response so a single LM Studio server is not hit
             # with concurrent page requests from this process.
             try:
-                page_text = ocr_page(
+                page_result = ocr_page(
                     session,
                     base_url=base_url,
                     prompt=prompt,
@@ -321,6 +441,22 @@ def ocr_pdf(
                     page_image_url=image_url,
                     timeout=timeout,
                 )
+                page_text = page_result.content
+            except ChatCompletionTimeout as exc:
+                append_thinking_output(
+                    pdf_path,
+                    stage=f"OCR page {index}",
+                    reason=f"timeout after {timeout}s",
+                    thinking=exc.thinking,
+                )
+                pages_text.append(format_page_timeout_output(index, timeout))
+                print(
+                    f"[OCR PAGE TIMEOUT] {pdf_path.name}: page {index}/{total_pages} "
+                    f"(timeout after {timeout}s)",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                continue
             except requests.Timeout:
                 pages_text.append(format_page_timeout_output(index, timeout))
                 print(
@@ -333,6 +469,13 @@ def ocr_pdf(
 
             original_page_chars = len(page_text)
             page_text = truncate_page_ocr_text(page_text)
+            if len(page_text) == 0:
+                append_thinking_output(
+                    pdf_path,
+                    stage=f"OCR page {index}",
+                    reason="blank response",
+                    thinking=page_result.thinking,
+                )
             pages_text.append(format_page_output(index, page_text))
             print(
                 f"[OCR PAGE DONE] {pdf_path.name}: page {index}/{total_pages} "
@@ -451,7 +594,7 @@ def main() -> int:
         if answer_text is not None:
             review_started_at = time.perf_counter()
             try:
-                review = review_ocr_result(
+                review_result = review_ocr_result(
                     session,
                     base_url=args.base_url,
                     review_prompt=review_prompt,
@@ -460,6 +603,28 @@ def main() -> int:
                     ocr_text=text,
                     timeout=args.timeout,
                 )
+                review = review_result.content
+                if not review:
+                    append_thinking_output(
+                        pdf_path,
+                        stage="Review",
+                        reason="blank response",
+                        thinking=review_result.thinking,
+                    )
+            except ChatCompletionTimeout as exc:
+                append_thinking_output(
+                    pdf_path,
+                    stage="Review",
+                    reason=f"timeout after {args.timeout}s",
+                    thinking=exc.thinking,
+                )
+                text = append_review_timeout_to_output(text, args.timeout)
+                output_path.write_text(text, encoding="utf-8")
+                print(
+                    f"[REVIEW TIMEOUT] {pdf_path.name} (timeout after {args.timeout}s)",
+                    file=sys.stderr,
+                )
+                continue
             except requests.Timeout:
                 text = append_review_timeout_to_output(text, args.timeout)
                 output_path.write_text(text, encoding="utf-8")

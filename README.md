@@ -143,6 +143,7 @@ pdf_ocr -ans answerfile.txt pdffile.pdf
 - OCR 中に timeout したページは、timeout した旨を Markdown に書いたうえで次のページ処理へ進みます
 - page 1 または page 2 の OCR 出力文字数が 0 の場合は、その PDF の Markdown 作成と review をスキップして次のファイルへ進みます
 - review 中に timeout した場合は、OCR 結果は保存したうえで、timeout した旨を Markdown に追記します
+- stream で受け取った thinking があり、timeout または空応答になった場合は、PDF と同じディレクトリの `thinking-<PDFファイル名のbasename>.txt` に追記します
 
 ## YAML 設定
 
