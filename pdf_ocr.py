@@ -22,6 +22,7 @@ import sys
 import time
 import zipfile
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -319,6 +320,28 @@ class ChatCompletionResult:
     thinking: str
 
 
+@dataclass
+class PdfProcessOutcome:
+    ocr_text: str
+    skip_output: bool
+    ocr_page_timeouts: set[int]
+    ocr_blank_pages: set[int]
+
+
+@dataclass
+class ModelRunStats:
+    normal: int = 0
+    ocr_page1_timeout: int = 0
+    ocr_page1_blank: int = 0
+    ocr_page2_timeout: int = 0
+    ocr_page2_blank: int = 0
+    ocr_page3_or_later_timeout: int = 0
+    ocr_page3_or_later_blank: int = 0
+    review_timeout: int = 0
+    review_blank: int = 0
+    other_errors: int = 0
+
+
 class ChatCompletionTimeout(requests.Timeout):
     def __init__(self, message: str, *, thinking: str = "") -> None:
         super().__init__(message)
@@ -586,6 +609,83 @@ def truncate_page_ocr_text(page_text: str) -> str:
     return page_text[:MAX_OCR_OUTPUT_CHARS]
 
 
+def is_normal_outcome(
+    outcome: PdfProcessOutcome,
+    *,
+    review_timed_out: bool,
+    review_blank: bool,
+) -> bool:
+    return (
+        not outcome.skip_output
+        and not outcome.ocr_page_timeouts
+        and not outcome.ocr_blank_pages
+        and not review_timed_out
+        and not review_blank
+    )
+
+
+def add_outcome_to_stats(
+    stats: ModelRunStats,
+    outcome: PdfProcessOutcome,
+    *,
+    review_timed_out: bool = False,
+    review_blank: bool = False,
+) -> None:
+    if 1 in outcome.ocr_page_timeouts:
+        stats.ocr_page1_timeout += 1
+    if 1 in outcome.ocr_blank_pages:
+        stats.ocr_page1_blank += 1
+    if 2 in outcome.ocr_page_timeouts:
+        stats.ocr_page2_timeout += 1
+    if 2 in outcome.ocr_blank_pages:
+        stats.ocr_page2_blank += 1
+    if any(page >= 3 for page in outcome.ocr_page_timeouts):
+        stats.ocr_page3_or_later_timeout += 1
+    if any(page >= 3 for page in outcome.ocr_blank_pages):
+        stats.ocr_page3_or_later_blank += 1
+    if review_timed_out:
+        stats.review_timeout += 1
+    if review_blank:
+        stats.review_blank += 1
+    if is_normal_outcome(
+        outcome,
+        review_timed_out=review_timed_out,
+        review_blank=review_blank,
+    ):
+        stats.normal += 1
+
+
+def write_model_stats_log(stats_by_model: dict[str, ModelRunStats], output_dir: Path) -> Path:
+    timestamp = datetime.now().strftime("%Y%m%d%H%M")
+    path = output_dir / f"log_{timestamp}.txt"
+    index = 2
+    while path.exists():
+        path = output_dir / f"log_{timestamp}_{index}.txt"
+        index += 1
+
+    labels = [
+        ("正常終了", "normal"),
+        ("1枚目のOCRでtimeout", "ocr_page1_timeout"),
+        ("1枚目のOCRで出力0文字", "ocr_page1_blank"),
+        ("2枚目のOCRでtimeout", "ocr_page2_timeout"),
+        ("2枚目のOCRで出力0文字", "ocr_page2_blank"),
+        ("3枚目以降のOCRでtimeout", "ocr_page3_or_later_timeout"),
+        ("3枚目以降のOCRで出力0文字", "ocr_page3_or_later_blank"),
+        ("reviewでtimeout", "review_timeout"),
+        ("reviewで出力0文字", "review_blank"),
+        ("その他のエラー", "other_errors"),
+    ]
+    lines: list[str] = []
+    for model, stats in stats_by_model.items():
+        lines.append(f"===== Model: {model} =====")
+        for label, attr in labels:
+            lines.append(f"{label}: {getattr(stats, attr)}")
+        lines.append("")
+
+    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return path
+
+
 def ocr_pdf(
     pdf_path: Path,
     *,
@@ -596,8 +696,10 @@ def ocr_pdf(
     model: str,
     dpi: int,
     timeout: int,
-) -> tuple[str, bool]:
+) -> PdfProcessOutcome:
     pages_text: list[str] = []
+    ocr_page_timeouts: set[int] = set()
+    ocr_blank_pages: set[int] = set()
     skip_output = False
     with fitz.open(pdf_path) as document:
         total_pages = len(document)
@@ -630,6 +732,7 @@ def ocr_pdf(
                     reason=f"timeout after {timeout}s",
                     thinking=exc.thinking,
                 )
+                ocr_page_timeouts.add(index)
                 pages_text.append(format_page_timeout_output(index, timeout))
                 print(
                     f"[OCR PAGE TIMEOUT] {pdf_path.name}: page {index}/{total_pages} "
@@ -639,6 +742,7 @@ def ocr_pdf(
                 )
                 continue
             except requests.Timeout:
+                ocr_page_timeouts.add(index)
                 pages_text.append(format_page_timeout_output(index, timeout))
                 print(
                     f"[OCR PAGE TIMEOUT] {pdf_path.name}: page {index}/{total_pages} "
@@ -651,6 +755,7 @@ def ocr_pdf(
             original_page_chars = len(page_text)
             page_text = truncate_page_ocr_text(page_text)
             if len(page_text) == 0:
+                ocr_blank_pages.add(index)
                 append_thinking_output(
                     pdf_path,
                     model=model,
@@ -681,7 +786,12 @@ def ocr_pdf(
                 )
                 skip_output = True
                 break
-    return "\n\n".join(pages_text).strip() + "\n", skip_output
+    return PdfProcessOutcome(
+        ocr_text="\n\n".join(pages_text).strip() + "\n",
+        skip_output=skip_output,
+        ocr_page_timeouts=ocr_page_timeouts,
+        ocr_blank_pages=ocr_blank_pages,
+    )
 
 
 def process_pdf_files_for_model(
@@ -698,7 +808,8 @@ def process_pdf_files_for_model(
     overwrite: bool,
     output_extension: str,
     answer_text: str | None,
-) -> None:
+) -> ModelRunStats:
+    stats = ModelRunStats()
     for pdf_path in pdf_files:
         output_path = pdf_path.with_suffix(output_extension)
         markdown_output_path = pdf_path.with_suffix(".md")
@@ -715,7 +826,7 @@ def process_pdf_files_for_model(
 
         ocr_started_at = time.perf_counter()
         try:
-            text, skip_output = ocr_pdf(
+            outcome = ocr_pdf(
                 pdf_path,
                 session=session,
                 base_url=base_url,
@@ -733,6 +844,7 @@ def process_pdf_files_for_model(
                 reason=f"timeout after {timeout}s",
                 detail=str(exc),
             )
+            stats.other_errors += 1
             print(
                 f"[ERROR] Timeout while processing {pdf_path.name}: {exc}",
                 file=sys.stderr,
@@ -746,6 +858,7 @@ def process_pdf_files_for_model(
                 reason="HTTP error",
                 detail=format_http_error(exc),
             )
+            stats.other_errors += 1
             print(
                 f"[ERROR] HTTP error while processing {pdf_path.name}: {format_http_error(exc)}",
                 file=sys.stderr,
@@ -759,6 +872,7 @@ def process_pdf_files_for_model(
                 reason="request failed",
                 detail=str(exc),
             )
+            stats.other_errors += 1
             print(
                 f"[ERROR] Request failed while processing {pdf_path.name}: {exc}",
                 file=sys.stderr,
@@ -772,14 +886,19 @@ def process_pdf_files_for_model(
                 reason="processing failed",
                 detail=str(exc),
             )
+            stats.other_errors += 1
             print(f"[ERROR] Failed to process {pdf_path.name}: {exc}", file=sys.stderr)
             continue
 
         ocr_elapsed = time.perf_counter() - ocr_started_at
         print(f"[OCR DONE] {pdf_path.name} ({ocr_elapsed:.2f}s)", file=sys.stderr)
-        if skip_output:
+        if outcome.skip_output:
+            add_outcome_to_stats(stats, outcome)
             continue
 
+        review_timed_out = False
+        review_blank = False
+        text = outcome.ocr_text
         if answer_text is not None:
             review_started_at = time.perf_counter()
             try:
@@ -795,6 +914,7 @@ def process_pdf_files_for_model(
                 )
                 review = review_result.content
                 if not review:
+                    review_blank = True
                     append_thinking_output(
                         pdf_path,
                         model=model,
@@ -810,8 +930,15 @@ def process_pdf_files_for_model(
                     reason=f"timeout after {timeout}s",
                     thinking=exc.thinking,
                 )
+                review_timed_out = True
                 text = append_review_timeout_to_output(text, timeout)
                 output_path.write_text(text, encoding="utf-8")
+                add_outcome_to_stats(
+                    stats,
+                    outcome,
+                    review_timed_out=review_timed_out,
+                    review_blank=review_blank,
+                )
                 print(
                     f"[REVIEW TIMEOUT] {pdf_path.name} (timeout after {timeout}s)",
                     file=sys.stderr,
@@ -825,8 +952,15 @@ def process_pdf_files_for_model(
                     reason=f"timeout after {timeout}s",
                     detail=str(exc),
                 )
+                review_timed_out = True
                 text = append_review_timeout_to_output(text, timeout)
                 output_path.write_text(text, encoding="utf-8")
+                add_outcome_to_stats(
+                    stats,
+                    outcome,
+                    review_timed_out=review_timed_out,
+                    review_blank=review_blank,
+                )
                 print(
                     f"[REVIEW TIMEOUT] {pdf_path.name} (timeout after {timeout}s)",
                     file=sys.stderr,
@@ -840,6 +974,7 @@ def process_pdf_files_for_model(
                     reason="HTTP error",
                     detail=format_http_error(exc),
                 )
+                stats.other_errors += 1
                 print(
                     f"[ERROR] HTTP error while reviewing {pdf_path.name}: {format_http_error(exc)}",
                     file=sys.stderr,
@@ -853,6 +988,7 @@ def process_pdf_files_for_model(
                     reason="request failed",
                     detail=str(exc),
                 )
+                stats.other_errors += 1
                 print(
                     f"[ERROR] Request failed while reviewing {pdf_path.name}: {exc}",
                     file=sys.stderr,
@@ -864,7 +1000,14 @@ def process_pdf_files_for_model(
             text = append_review_to_output(text, review)
 
         output_path.write_text(text, encoding="utf-8")
+        add_outcome_to_stats(
+            stats,
+            outcome,
+            review_timed_out=review_timed_out,
+            review_blank=review_blank,
+        )
         print(f"[WRITE] {output_path.name}", file=sys.stderr)
+    return stats
 
 
 def main() -> int:
@@ -980,12 +1123,13 @@ def main() -> int:
     if answer_path is not None:
         answer_text = answer_path.read_text(encoding="utf-8")
 
+    stats_by_model: dict[str, ModelRunStats] = {}
     for index, (_, model) in enumerate(resolved_models, start=1):
         print(
             f"[MODEL START] {model} ({index}/{len(resolved_models)})",
             file=sys.stderr,
         )
-        process_pdf_files_for_model(
+        stats_by_model[model] = process_pdf_files_for_model(
             pdf_files,
             session=session,
             base_url=args.base_url,
@@ -1000,6 +1144,8 @@ def main() -> int:
             answer_text=answer_text,
         )
 
+    log_path = write_model_stats_log(stats_by_model, target.parent if target.is_file() else target)
+    print(f"[LOG WRITE] {log_path.name}", file=sys.stderr)
     return 0
 
 

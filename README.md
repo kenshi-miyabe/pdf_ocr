@@ -161,9 +161,11 @@ pdf_ocr . --config /path/to/custom.yml --model <model-id>
 ## 出力とエラー
 
 - OCR 結果は PDF と同じ場所に同名 `.md` として保存します
+- 実行ごとに対象ディレクトリへ `log_YYYYMMDDHHMM.txt` を作成し、モデルごとの件数を保存します
 - 各ページは `## page N 文字数` の見出し付きで保存します
 - page 1 または page 2 の OCR 出力文字数が 0 の場合は、その PDF の Markdown 作成と review をスキップします
 - OCR や review の timeout は Markdown に追記される場合があります
+- 集計ログには、正常終了、1枚目/2枚目/3枚目以降 OCR の timeout、1枚目/2枚目/3枚目以降 OCR の出力0文字、review の timeout、review の出力0文字、その他のエラーの件数をモデルごとに出力します
 - thinking や処理エラーは `thinking-<PDF名>-<model>-<stage>.txt` 形式で保存します
 - 同名の thinking ファイルがある場合は `-2`, `-3` のように連番を付けます
 
